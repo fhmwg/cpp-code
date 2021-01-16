@@ -7,6 +7,7 @@
 #include <XMP.hpp>
 #include <XMP.incl_cpp>
 
+
 namespace fhmwg {
 
 /**
@@ -88,7 +89,6 @@ XMP_OptionBits *options) {
     xmpMeta.GetQualifier(schemaNS, arrayPath.c_str(), qualNS, qualName, qualValue, options);
 }
 
-
 AltLang getAltLang(SXMPMeta xmp, const char *iri, const char *prop, bool normalize=false) {
     AltLang ans;
     LangStr tmp;
@@ -104,23 +104,8 @@ AltLang getAltLang(SXMPMeta xmp, const char *iri, const char *prop, bool normali
         }
     } else { // AltLang
         XMP_Index num = xmp.CountArrayItems(iri, prop);
-        // find the default
-        int main = 0; // arbitrary initial default
         for(int i=0; i<num; i+=1) {
-            getArrayItemQuntifier(xmp, iri, prop, i+1, ns::_xml, "xml:lang", &tmp.lang, 0);
-            if (tmp.lang == "x-default") { main = i; break; }
-            if (tmp.lang.find("-i-default") != std::string::npos) { main = i; }
-        }
-        // store the default
-        xmp.GetArrayItem(iri, prop, main+1, &tmp.text, &opt);
-        if (opt & kXMP_PropHasLang) {
-            getArrayItemQuntifier(xmp, iri, prop, main+1, ns::_xml, "xml:lang", &tmp.lang, 0);
-        }
-        if (normalize) whitespaceNormalize(tmp.text);
-        ans.entries.push_back(tmp);
-        // find and store any others
-        for(int i=0; i<num; i+=1) if (i != main) {
-            xmp.GetArrayItem(iri, prop, main+1, &tmp.text, &opt);
+            xmp.GetArrayItem(iri, prop, i+1, &tmp.text, &opt);
             getArrayItemQuntifier(xmp, iri, prop, i+1, ns::_xml, "xml:lang", &tmp.lang, 0);
             if (normalize) whitespaceNormalize(tmp.text);
             ans.entries.push_back(tmp);
@@ -230,10 +215,10 @@ std::vector<Album> getAlbums(SXMPMeta xmp) {
         Album tmp;
 
         std::string cell, prop;
-        SXMPUtils::ComposeArrayItemPath(ns::_mwg, "Collection", i+1, &cell);
-        SXMPUtils::ComposeStructFieldPath(ns::_mwg, cell.c_str(), ns::_iptc, "CollectionName", &prop);
+        SXMPUtils::ComposeArrayItemPath(ns::_mwg, "Collections", i+1, &cell);
+        SXMPUtils::ComposeStructFieldPath(ns::_mwg, cell.c_str(), ns::_mwg, "CollectionName", &prop);
         xmp.GetProperty(ns::_mwg, prop.c_str(), &tmp.name, 0);
-        SXMPUtils::ComposeStructFieldPath(ns::_mwg, cell.c_str(), ns::_iptc, "CollectionURI", &prop);
+        SXMPUtils::ComposeStructFieldPath(ns::_mwg, cell.c_str(), ns::_mwg, "CollectionURI", &prop);
         xmp.GetProperty(ns::_mwg, prop.c_str(), &tmp.id, 0);
         
         if (tmp.name.size() > 0 || tmp.id.size() > 0)
@@ -421,9 +406,6 @@ void ImageMetadata::parseFile(const char *fileName) {
     
 	xmpFile.CloseFile();
 }
-
-
-
 
 
 

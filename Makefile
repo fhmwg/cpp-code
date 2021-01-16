@@ -7,13 +7,16 @@ LDFLAGS := $(XMP_LIB)/staticXMPCore.ar $(XMP_LIB)/staticXMPFiles.ar -ldl
 
 .PHONY: clean all
 
-all: parser
+all: parser writer
 
 clean:
 	rm -f *.o tool
 
 parser: fhmwg1parse.o fhmwg1ds.o parser.o
 	$(CXX) $^ -o parser $(LDFLAGS)
+
+writer: fhmwg1parse.o fhmwg1ds.o writer.o
+	$(CXX) $^ -o writer $(LDFLAGS)
 
 %.o: %.cpp %.hpp
 	$(CXX) $(CXXFLAGS) $< -c

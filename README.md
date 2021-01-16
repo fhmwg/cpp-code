@@ -1,19 +1,58 @@
 # How to build
 
-1. Get the Adobe XMP SDK <https://github.com/adobe/XMP-Toolkit-SDK/>
-2. Build Adobe XMP SDK
+1. Get the Adobe XMP Toolkit SDK <https://github.com/adobe/XMP-Toolkit-SDK/>
+2. Build Adobe XMP  Toolkit SDK
     - See the README in the `build` directory for your OS
     - This involves downloading <https://www.zlib.net/> and <https://sourceforge.net/projects/expat/>. It was not clear to me, but for clarity the versioned folders inside those archives are not to be perserved; i.e., you should end up with `third-party/expat/lib/` not `third-party/expat/expat-2.2.10/lib/`
     - I had to make a few other changes on my system to reflect that I was not set up for highly secure builds:
         - My `gcc` was built with `--disable-libssp` (see `gcc -v` to check yours), so in `build/ProductConfig.cmake` I removed `${XMP_GCC_LIBPATH}/libssp.a` from the `XMP_PLATFORM_LINK` definition
         - CMake misidentified my secure random number library. I thought about fixing its detection logic, but as I did not need security for my tool I instead added `#define XML_POOR_ENTROPY`{.c} to `third-party/expat/lib/xmlparse.c`
-3. Adjust `Makefile` in this project
+3. Get the latest `json.hpp` from <https://github.com/nlohmann/json/releases> and place it in the same directory as the `hpp` files from this project
+4. Adjust `Makefile` in this project
     - I've hard-coded paths from my Linux machine. You'll probably need to change `XMP_BASE` and `XMP_LIB`, and if you are not on Linux may need to change a lot more. The Adobe XMP SDK has a directory `samples` that uses `cmake` to make cross-platform builds, which might be useful if you find my Makefile problematic
     - I've pinned the Makefile to static linking, which simplifies things somewhat as it avoids the need for threading.
 
-# parser
+# Motivation and design notes
 
-The example `parser` program accepted one or more image file from the command line, parses their metadata, and prints a representation of the FHMWG-recommended subset of that metadata to the command line. By default, the output is in JSON format, one line per image file. If given the `-g` flag, a GEDCOM-like representation s used instead.
+The primary purpose of this project is to provide a public-domain code base others may use, modify, or refer to freely in their own implementations of the FHWMG recommendations.
+
+I chose to use C++ and the Adobe XMP Toolkit based on a review of XMP processing libraries. I noted the toolkit seemed to be the root of many other libraries:
+
+- C++ Adobe XMP Toolkit is wrapped by
+    - C++ [exiv2](https://www.exiv2.org/), which is wrapped by
+        - GObject [gexiv2](https://wiki.gnome.org/Projects/gexiv2), which is wrapped by
+            - Rust [rexvi2](https://github.com/felixc/rexiv2)
+    - C [exempi](https://libopenraw.freedesktop.org/exempi/), which is wrapped by
+        - Python [XMP toolkit](https://pypi.org/project/python-xmp-toolkit/)
+    - NodeJS [xmp-toolkit](https://github.com/Lambda-IT/xmp-toolkit)
+- Go [go-xmp](https://github.com/trimmer-io/go-xmp) is a separate implementation
+- Perl [exiftool](https://exiftool.org/) is a separate implementation
+
+Several EXIF libraries (e.g. [node-exif](https://github.com/tj/node-exif), [libexif](https://libexif.github.io/), [exif.js](https://github.com/exif-js/exif-js)) also have some XMP support, some simply returning its raw XML/RDF string while others parse it to some degree. I have not yet looked into any of those in more detail.
+
+# `parser`
+
+The example `parser` program accepts one or more image file from the command line, parses their metadata, and prints a representation of the FHMWG-recommended subset of that metadata to the command line. By default, the output is in JSON format, one line per image file. If given the `-g` flag, a GEDCOM-like representation s used instead.
+
+For example, to extract the FHMWG-compatible data from the example image shown at <https://www.iptc.org/std/photometadata/examples/image-region-examples/>, you'd download the [4 Heads](https://www.iptc.org/std/photometadata/examples/image-region-examples/images/photo-4iptc-heads.jpg) resource and run
+
+```bash
+make
+./parser photo-4iptc-heads.jpg
+```
+
+The parser is fairly forgiving, reading other dates if there is no date, people not in a region, and other suggested XMP data from the specification.
+
+Additional features to add:
+
+- [ ] Extract image dimensions and convert pixel-coordinate regions to relative regions
+- [ ] Use EXIF and IPTC IIM backups when no XMP field is available
+- [ ] Add code documentation
+- [ ] Create daemon-mode with sockets for parsing as a service
+- [ ] Add support for pre-IPTC regions:
+    - [ ] the Microsoft People region (see [spec](https://docs.microsoft.com/en-us/windows/win32/wic/-wic-people-tagging?redirectedfrom=MSDN); this is always a relative rectangle and always stores a single person name
+    - [ ] Metadata Working Group region (see [archive of spec](https://web.archive.org/web/20180919181934/www.metadataworkinggroup.org/pdf/mwg_guidance.pdf) page 53; this is much like IPTC regions in design, with the same 3 area types and relative coordinates. However, it does not have nested strutures and cannot distinguish between people and other tagged items of interest
+
 
 ## JSON example output
 
@@ -35,8 +74,8 @@ AltLangs are given as a JSON-LD compatible language map.
    ,"latitude":48.8495999
    ,"longitude":2.30588425
    ,"ids":
-     ["https://catalogue.bnf.fr/ark:/12148/cb152821567"
-     ,"https://d-nb.info/gnd/4044660-8"
+     ["https://catalogue.bnf.fr/ark:/12148/cb13742945j"
+     ,"https://d-nb.info/gnd/2152375-7"
      ]
    }
   ]
@@ -52,7 +91,7 @@ AltLangs are given as a JSON-LD compatible language map.
   [{"title":{"en":"Painting of rolling fields"}
    ,"rectangle":{"x":0.7,"y":0,"w":0.3,"h":0.5}
    }
-  ,{"title":{"en":"Placard describing painting"}
+  ,{"title":{"fr":"Placard décrivant la peinture"}
    ,"polygon":
      [{"x":0.3,"y":0.5}
      ,{"x":0.3,"y":0.6}
@@ -120,3 +159,7 @@ n _POLYGON                  {1:1}
      +2 _Y <Number>         {1:1}
 ]
 ```
+
+# `writer`
+
+The (not yet written) writer program will allow you to specify an existing image, a desired FHMWG metadata set, and a new file name and will write the same image to the new name with no changes except that the FHMWG metadata will now match that given. Other metadata will be unmodified.
