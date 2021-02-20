@@ -162,4 +162,38 @@ n _POLYGON                  {1:1}
 
 # `writer`
 
-The (not yet written) writer program will allow you to specify an existing image, a desired FHMWG metadata set, and a new file name and will write the same image to the new name with no changes except that the FHMWG metadata will now match that given. Other metadata will be unmodified.
+The writer takes a reference image and an output image name;
+it copies the image to the new name and changes the metadata based on JSON provided at the command line.
+
+The JSON format matches that provided by the parser (see [JSON example output]).
+If a key is missing, the corresponding metadata is left unaltered (it is not even normalized).
+If a key is present, all current metadata that would match that key is removed and the metadata provided in the input (if any) is used instead.
+
+For example, this invocation:
+
+```bash
+make
+./writer image_i_provide.jpg new_image.jpg <<EOF
+{"people":null
+,"title":{"x-default":"My Image","ja":"私の写真"}
+}
+EOF
+```
+
+will copy `image_i_provide.jpg` with two changes to the metadata:
+any FHMWG-recognized person metadata will be removed
+and the title will be set to a string in two languages:
+`My Image` as the default and `私の写真` in the Japanese locale.
+
+# Project status
+
+- [x] Implement XMP-to-GEDCOM parser
+- [x] Implement XMP-to-JSON parser
+- [x] Implement JSON-to-XML writer
+- [ ] Implement GEDCOM-to-XML writer
+- [x] Verify operation on IPTC example images on a Linux machine
+    - <https://iptc.org/std/photometadata/examples/IPTC-PhotometadataRef-Std2017.1.jpg>
+    - <https://www.iptc.org/std/photometadata/examples/image-region-examples/images/photo-4iptc-heads.jpg>
+- [ ] Perform additional testing
+- [ ] Create full documentation
+- [ ] Test on multiple operating systems and platforms

@@ -32,7 +32,7 @@ static void setAltLang(SXMPMeta xmp, const char *iri, const char *prop, json alt
     if (altLang.is_string())
         altLang = json::object({{"x-default",altLang}});
     for(auto& pair : altLang.items()) {
-        /* naive:
+        /* naive, wrong for non-recommended x-default usage:
          * xmp.SetLocalizedText(iri, prop, 0, pair.key().c_str(), pair.value(), 0);
          */
         // work-around: manual assignment of array entries
@@ -43,11 +43,58 @@ static void setAltLang(SXMPMeta xmp, const char *iri, const char *prop, json alt
     }
 }
 
+static void setRegionArea(SXMPMeta xmp, const char *prop, const json& object) {
+    std::string s_path, item;
+    SXMPUtils::ComposeStructFieldPath(ns::_iptc, prop, ns::_iptc, "RegionBoundary", &s_path);
+    const char *path = s_path.c_str();
+    xmp.SetProperty(ns::_iptc, path, 0, kXMP_PropValueIsStruct);
+    xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbUnit", "relative", 0);
+    if (object.contains("circle")) {
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbShape", "circle", 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbX", &item);
+        xmp.SetProperty_Float(ns::_iptc, item.c_str(), object["circle"]["x"], 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbY", &item);
+        xmp.SetProperty_Float(ns::_iptc, item.c_str(), object["circle"]["y"], 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbRx", &item);
+        xmp.SetProperty_Float(ns::_iptc, item.c_str(), object["circle"]["rx"], 0);
+    } else if (object.contains("rectangle")) {
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbShape", "rectangle", 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbX", &item);
+        xmp.SetProperty_Float(ns::_iptc, item.c_str(), object["rectangle"]["x"], 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbY", &item);
+        xmp.SetProperty_Float(ns::_iptc, item.c_str(), object["rectangle"]["y"], 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbW", &item);
+        xmp.SetProperty_Float(ns::_iptc, item.c_str(), object["rectangle"]["w"], 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbH", &item);
+        xmp.SetProperty_Float(ns::_iptc, item.c_str(), object["rectangle"]["h"], 0);
+    } else if (object.contains("polygon")) {
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbShape", "polygon", 0);
+        SXMPUtils::ComposeStructFieldPath(ns::_iptc, path, ns::_iptc, "rbVertices", &item);
+        for(auto& pt : object["polygon"]) {
+            std::string point, coord;
+            xmp.AppendArrayItem(ns::_iptc, item.c_str(), kXMP_PropArrayIsOrdered, 0, kXMP_PropValueIsStruct);
+            SXMPUtils::ComposeArrayItemPath(ns::_iptc, item.c_str(), xmp.CountArrayItems(ns::_iptc, item.c_str()), &point);
+            SXMPUtils::ComposeStructFieldPath(ns::_iptc, point.c_str(), ns::_iptc, "rbX", &coord);
+            xmp.SetProperty_Float(ns::_iptc, coord.c_str(), pt["x"], 0);
+            SXMPUtils::ComposeStructFieldPath(ns::_iptc, point.c_str(), ns::_iptc, "rbY", &coord);
+            xmp.SetProperty_Float(ns::_iptc, coord.c_str(), pt["y"], 0);
+        }
+    } else {
+        // use the whole-image region
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbShape", "rectangle", 0);
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbX", "0", 0);
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbY", "0", 0);
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbW", "1", 0);
+        xmp.SetStructField(ns::_iptc, path, ns::_iptc, "rbH", "1", 0);
+    }
+}
+
 /**
  * Works directly on JSON instead of on ImageMetadata because we want
  * a missing key to be ignored, while an empty key removes.
  */
 void updateMetadata(SXMPMeta xmp, json j) {
+
     if (j.contains("caption")) {
         xmp.DeleteProperty(ns::_dc, "description");
         if (j["caption"].is_object() || j["caption"].is_string())
@@ -111,15 +158,117 @@ void updateMetadata(SXMPMeta xmp, json j) {
                 }
                 if (a.contains("ids")) {
                     SXMPUtils::ComposeStructFieldPath(ns::_iptc, loc.c_str(), ns::_iptc, "LocationId", &entry);
-                    for(auto& iri : a["ids"])
-                        xmp.AppendArrayItem(ns::_iptc, entry.c_str(), 0, iri, 0);
+                    for(const std::string& iri : a["ids"]) {
+                        xmp.AppendArrayItem(ns::_iptc, entry.c_str(), kXMP_PropValueIsArray, iri.c_str(), 0);
+                    }
                 }
             }
         }
     }
 
-    #warning "TO DO: handle people"
-    #warning "TO DO: handle objects"
+    if (j.contains("people")) {
+        // remove all PersonInImage and PersonInImageWDetails, both at top level and in regions. If this renders a region empty, also remove the region.
+        xmp.DeleteProperty(ns::_iptc, "PersonInImage");
+        xmp.DeleteProperty(ns::_iptc, "PersonInImageWDetails");
+        XMP_Index regions = xmp.CountArrayItems(ns::_iptc, "ImageRegion");
+        
+        // iterate backwards so that removing regions does not re-index yet-to-be-visited regions
+        for(int i=regions; i>0; i-=1) {
+            // remove people from this region
+            std::string cell, path;
+            SXMPUtils::ComposeArrayItemPath(ns::_iptc, "ImageRegion", i, &cell);
+            SXMPUtils::ComposeStructFieldPath(ns::_iptc, cell.c_str(), ns::_iptc, "PersonInImageWDetails", &path);
+            xmp.DeleteProperty(ns::_iptc, path.c_str());
+            SXMPUtils::ComposeStructFieldPath(ns::_iptc, cell.c_str(), ns::_iptc, "PersonInImage", &path);
+            xmp.DeleteProperty(ns::_iptc, path.c_str());
+            
+            // and if the region is now empty, remove the region too
+            auto iter = SXMPIterator (xmp, ns::_iptc, cell.c_str(), kXMP_IterJustChildren | kXMP_IterOmitQualifiers);
+            std::string kpath;
+            bool empty = true;
+            while(iter.Next(0, &kpath, 0, 0))
+                if(kpath.find("/Iptc4xmpExt:RegionBoundary") != std::string::npos) { empty = false; break; }
+            if (empty)
+                xmp.DeleteArrayItem(ns::_iptc, "ImageRegion", i);
+        }
+        
+        // add a region with a PersonInImageWDetails[1] for each person
+        for(auto& person : j["people"]) {
+            // add a region
+            xmp.AppendArrayItem(ns::_iptc, "ImageRegion", kXMP_PropValueIsArray, 0, kXMP_PropValueIsStruct);
+            std::string cell, path, item, entry;
+            SXMPUtils::ComposeArrayItemPath(ns::_iptc, "ImageRegion", xmp.CountArrayItems(ns::_iptc, "ImageRegion"), &cell);
+            
+            // add a struct with an area to that region
+            xmp.SetProperty(ns::_iptc, cell.c_str(), 0, kXMP_PropValueIsStruct);
+            setRegionArea(xmp, cell.c_str(), person);
+            // add a person array with one person in it to that struct
+            SXMPUtils::ComposeStructFieldPath(ns::_iptc, cell.c_str(), ns::_iptc, "PersonInImageWDetails", &path);
+            xmp.AppendArrayItem(ns::_iptc, path.c_str(), kXMP_PropValueIsArray, 0, kXMP_PropValueIsStruct);
+            SXMPUtils::ComposeArrayItemPath(ns::_iptc, path.c_str(), 1, &item);
+            // add details about the person to that array item
+            if (person.contains("name")) {
+                SXMPUtils::ComposeStructFieldPath(ns::_iptc, item.c_str(), ns::_iptc, "PersonName", &entry);
+                setAltLang(xmp, ns::_iptc, entry.c_str(), person["name"]);
+            }
+            if (person.contains("description")) {
+                SXMPUtils::ComposeStructFieldPath(ns::_iptc, item.c_str(), ns::_iptc, "PersonDescription", &entry);
+                setAltLang(xmp, ns::_iptc, entry.c_str(), person["description"]);
+            }
+            if (person.contains("ids")) {
+                SXMPUtils::ComposeStructFieldPath(ns::_iptc, item.c_str(), ns::_iptc, "PersonId", &entry);
+                for(const std::string& iri : person["ids"]) {
+                    xmp.AppendArrayItem(ns::_iptc, entry.c_str(), kXMP_PropValueIsArray, iri.c_str(), 0);
+                }
+            }
+        }
+    }
+
+    if (j.contains("objects")) {
+        // remove all ArtworkOrObject, both at top level and in regions. If this renders a region empty, also remove the region.
+        xmp.DeleteProperty(ns::_iptc, "ArtworkOrObject");
+        XMP_Index regions = xmp.CountArrayItems(ns::_iptc, "ImageRegion");
+        
+        // iterate backwards so that removing regions does not re-index yet-to-be-visited regions
+        for(int i=regions; i>0; i-=1) {
+            // remove people from this region
+            std::string cell, path;
+            SXMPUtils::ComposeArrayItemPath(ns::_iptc, "ImageRegion", i, &cell);
+            SXMPUtils::ComposeStructFieldPath(ns::_iptc, cell.c_str(), ns::_iptc, "ArtworkOrObject", &path);
+            xmp.DeleteProperty(ns::_iptc, path.c_str());
+            
+            // and if the region is now empty, remove the region too
+            auto iter = SXMPIterator (xmp, ns::_iptc, cell.c_str(), kXMP_IterJustChildren | kXMP_IterOmitQualifiers);
+            std::string kpath;
+            bool empty = true;
+            while(iter.Next(0, &kpath, 0, 0))
+                if(kpath.find("/Iptc4xmpExt:RegionBoundary") != std::string::npos) { empty = false; break; }
+            if (empty)
+                xmp.DeleteArrayItem(ns::_iptc, "ImageRegion", i);
+        }
+        
+        // add a region with a ArtworkOrObject[1] for each object
+        for(auto& object : j["objects"]) {
+            // add a region
+            xmp.AppendArrayItem(ns::_iptc, "ImageRegion", kXMP_PropValueIsArray, 0, kXMP_PropValueIsStruct);
+            std::string cell, path, item, entry;
+            SXMPUtils::ComposeArrayItemPath(ns::_iptc, "ImageRegion", xmp.CountArrayItems(ns::_iptc, "ImageRegion"), &cell);
+            
+            // add a struct with an area to that region
+            xmp.SetProperty(ns::_iptc, cell.c_str(), 0, kXMP_PropValueIsStruct);
+            setRegionArea(xmp, cell.c_str(), object);
+            // add a person array with one person in it to that struct
+            SXMPUtils::ComposeStructFieldPath(ns::_iptc, cell.c_str(), ns::_iptc, "ArtworkOrObject", &path);
+            xmp.AppendArrayItem(ns::_iptc, path.c_str(), kXMP_PropValueIsArray, 0, kXMP_PropValueIsStruct);
+            SXMPUtils::ComposeArrayItemPath(ns::_iptc, path.c_str(), 1, &item);
+            // add details about the person to that array item
+            if (object.contains("title")) {
+                SXMPUtils::ComposeStructFieldPath(ns::_iptc, item.c_str(), ns::_iptc, "AOTitle", &entry);
+                setAltLang(xmp, ns::_iptc, entry.c_str(), object["title"]);
+            }
+        }
+    }
+
 }
 
 bool copyFile(const char *from, const char *to) {
@@ -170,7 +319,12 @@ int main(int argc, char *argv[]) {
     }
 
     auto j = json::parse(stdin);
-    fhmwg::updateMetadata(xmpMeta, j);
+    try {
+        fhmwg::updateMetadata(xmpMeta, j);
+    } catch (XMP_Error ex) {
+        fprintf(stderr, "CRASHED with error %d:\n  %s\n", ex.GetID(), ex.GetErrMsg());
+        throw ex;
+    }
 
     file.PutXMP(xmpMeta);
     file.CloseFile();

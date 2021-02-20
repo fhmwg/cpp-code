@@ -18,6 +18,10 @@ parser: fhmwg1parse.o fhmwg1ds.o parser.o
 writer: fhmwg1parse.o fhmwg1ds.o writer.o
 	$(CXX) $^ -o writer $(LDFLAGS)
 
+%: %.o
+	$(CXX) $^ -o $@ $(LDFLAGS)
+
+
 %.o: %.cpp %.hpp
 	$(CXX) $(CXXFLAGS) $< -c
 
